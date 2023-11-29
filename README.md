@@ -7,3 +7,5 @@
 3. Off By 1
 
 Additionally there is a clean.c file that was used in testing RepairGPT
+
+SecretKey.txt is for storing the OpenAI API key
