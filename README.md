@@ -9,3 +9,14 @@
 Additionally there is a clean.c file that was used in testing RepairGPT
 
 SecretKey.txt is for storing the OpenAI API key
+
+
+# Loop.py
+## How to run the example
+0. add inside the .env file the OpenAI API key
+1. navigate to Benchmarks/libtiff-cve-2016-5321/src
+2. unzip the file and rename it simply libtiff
+3. run the following command: `python Loop.py -b Benchmarks/libtiff-cve-2016-5321/commands/build.txt -c Benchmarks/libtiff-cve-2016-5321/commands/run.txt -r ./Benchmarks/libtiff-cve-2016-5321/report/stack_info.txt`
+
+## Known Issues
+1. as of 02/23 Loop.py runs correctly and it is able to apply a fix. With the current prompt the applied fix never solves the issue.
