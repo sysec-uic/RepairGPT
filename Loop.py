@@ -1,17 +1,13 @@
-import subprocess
-import sys
 import json
 import os
-import re
 import argparse
-import regex
 from dotenv import load_dotenv
 from openai import OpenAI
 from subprocess import Popen, PIPE
 
 
 
-def build_program(file_path, shell):
+def build_program(file_path: str, shell: Popen) -> None:
     with open(file_path, 'r') as file:
         lines = file.readlines()
 
@@ -23,7 +19,7 @@ def build_program(file_path, shell):
 
 
 
-def run_program(file_path, shell):
+def run_program(file_path: str, shell: Popen) -> tuple[bool, str]:
     with open(file_path, 'r') as file:
         command = file.readline().strip()
 
@@ -47,7 +43,7 @@ def run_program(file_path, shell):
 
 
 # given a filename and a starting point search path, this function will search for the file and return the relative path to it
-def find_file(filename, search_path):
+def find_file(filename: str, search_path: str) -> str:
 
     for root, dir, files in os.walk(search_path):
         if filename in files:
@@ -58,7 +54,7 @@ def find_file(filename, search_path):
 
 
 # this function, given a file path and a function name, will return the code of the function
-def get_function_code(file_path, function_name):
+def get_function_code(file_path: str, function_name: str) -> tuple[int, int, str]:
     print(f"Searching for function {function_name} in file {file_path}")
     with open(file_path, 'r') as file:
         lines = file.readlines()
@@ -73,33 +69,46 @@ def get_function_code(file_path, function_name):
         index = 0
 
         for line in lines:
+            read_line = False
             index += 1
             if function_name in line and line.count('(') == 1 and not ';' in line:
                 if line.index(function_name) < line.index('('):
-                    function_starting_line = index
+                    #function_starting_line = index
                     opening_round_brace = True
-                    function_code += line
+                    if not read_line:
+                        function_code += line
+                        read_line = True
                 
             if opening_round_brace and not closing_round_brace and not opening_curly_brace:
                 if ')' in line:
                     closing_round_brace = True
-                    function_code += line
                 if ';' in line:
                     closing_round_brace = False
                     opening_round_brace = False
                     function_code = ""
+                else:
+                    if not read_line:
+                        function_code += line
+                        read_line = True
             
             if opening_round_brace and closing_round_brace and not opening_curly_brace:
-                function_code += line
                 if '{' in line:
                     opening_curly_brace = True
+                    #function_code += line
+                    function_starting_line = index + 1 #we want the line after the opening curly brace
                 elif ';' in line:
                     closing_round_brace = False
                     opening_round_brace = False
                     function_code = ""
+                else:
+                    if not read_line:
+                        function_code += line
+                        read_line = True
             
             if opening_curly_brace:
-                function_code += line
+                if not read_line:
+                    function_code += line
+                    read_line = True
                 if '{' in line:
                     bracket_counter += line.count('{')
                 if '}' in line:
@@ -117,7 +126,7 @@ def get_function_code(file_path, function_name):
 # returns the response from OpenAI
 # the reponse should contain a json file containing a list of items
 # each item should contain the file name, function name and line number
-def ask_llm_to_find(report):
+def ask_llm_to_find(report: str) -> str:
     completion =  client.chat.completions.create(
 
         messages=[
@@ -136,7 +145,7 @@ def ask_llm_to_find(report):
     
     #if completion.choices[0].message.content starts with ``` then we want to discard the first and last line
     if completion.choices[0].message.content.startswith("```"):
-        return completion.choices[0].message.content.split('\n')[1:-1]
+        return '\n'.join(completion.choices[0].message.content.split('\n')[1:-1]) #we return a string
 
     return completion.choices[0].message.content
 
@@ -144,13 +153,13 @@ def ask_llm_to_find(report):
 # creates and sends the request to OpenAI - just an example for now
 # returns the response from OpenAI
 # the reponse should contain the fixed code
-def ask_llm_to_fix(report, function_code):
+def ask_llm_to_fix(report: str, function_code: str) -> str:
     completion =  client.chat.completions.create(
 
         messages=[
             {
                 "role": "user",
-                "content": f"{report}\n{function_code}\n Given this information, provide a fix for the function without changing the function prototype. Return just the code for the function in its entirety without any additional comments",
+                "content": f"{report}\n{function_code}\n Given this information, provide a fix. Return the fixed code for the whole function without any additional comments.",
             }
         ],
 
@@ -162,14 +171,26 @@ def ask_llm_to_fix(report, function_code):
 
     #if completion.choices[0].message.content starts with ``` then we want to discard the first and last line
     if completion.choices[0].message.content.startswith("```"):
-        return completion.choices[0].message.content.split('\n')[1:-1]
+        return '\n'.join(completion.choices[0].message.content.split('\n')[1:-1])
 
     return completion.choices[0].message.content
 
 
-def replace_function_in_c_file(filepath, new_function_code, starting_line, ending_line):
+def process_new_function_code(function_code: str, function_name: str) -> str:
+    lines = function_code.split('\n')
+    if function_name in lines[0]:
+        opening_brace_index = function_code.find('{')
+        if opening_brace_index != -1:
+            print("Opening brace found")
+            return function_code[opening_brace_index + 1 :]
+    return function_code
+
+
+def replace_function_in_c_file(filepath: str, function_name: str, new_function_code: str, starting_line: int, ending_line: int) -> None:
     with open(filepath, 'r') as file:
         lines = file.readlines()
+
+    new_function_code = process_new_function_code(new_function_code, function_name)
 
     # Split the new function code into lines, adding the newline characters back
     new_lines = [line + '\n' for line in new_function_code.split('\n')]
@@ -180,7 +201,8 @@ def replace_function_in_c_file(filepath, new_function_code, starting_line, endin
     with open(filepath, 'w') as file:
         file.writelines(lines)
 
-def parse_arguments():
+
+def parse_arguments() -> tuple[str, str, int, str]:
     parser = argparse.ArgumentParser(add_help=False)
 
     parser.add_argument("-b", default="build.txt", type=str)
@@ -250,18 +272,21 @@ if __name__ == '__main__':
                     print(f"Function code: {function_code}")
                     print(f"Function starting line: {starting_line}")
                     print(f"Function ending line: {ending_line}")
+
                     if starting_line is not None:
                         print("starting line is NOT None")
                         fixed_function_code = ask_llm_to_fix(stderr_content, function_code)
                         print(f"fixed code for {item['function']}:\n{fixed_function_code}")
+
                     if fixed_function_code is not None and fixed_function_code != "None":
                         print("fixed function code is NOT None")
-                        replace_function_in_c_file(file_path, fixed_function_code, starting_line, ending_line)
+                        replace_function_in_c_file(file_path, item['function'], fixed_function_code, starting_line, ending_line)
                         print(f"Function {item['function']} replaced in file {file_path}")
                         shell = Popen(['/bin/bash'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
                         build_program(build_commands, shell)
                         print("Program rebuilt")
                         crash, stderr_content = run_program(run_commands, shell)
+
                         if not crash:
                             print("Program ran successfully after the fix")
                             break
