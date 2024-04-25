@@ -22,7 +22,7 @@ from openai import OpenAI
 #
 # --------------------------------------------------------- #
 
-TMP_FOLDER_PATH = "~/workshop/tmp"
+TMP_FOLDER_ABS = "~/workshop/tmp"
 
 ##
  # This function parses the arguments provided by the user using the argparse library.
@@ -80,7 +80,7 @@ def build_program(path, file_path):
 ##
  # This function starts the fuzzer with the target application following the instructions provided.
 ##   
-def fuzz_program(path, file_path, event):
+def fuzz_program(path, file_path, event, absolute_tmp_path):
     print("starting fuzzer...", end='')
     shell = Popen(['/bin/bash'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
@@ -91,7 +91,7 @@ def fuzz_program(path, file_path, event):
         command = file.readline().strip()
 
     # Send the command to the shell
-    shell.stdin.write((f"{command} & echo $! > {TMP_FOLDER_PATH}/process.pid" + '\n').encode())
+    shell.stdin.write((f"{command} & echo $! > {absolute_tmp_path}/process.pid" + '\n').encode())
     shell.stdin.flush()
     event.set() # signal the main thread that we are starting the fuzzer
 
@@ -178,6 +178,7 @@ def ask_llm_to_find(report, client, logs_folder_name):
                 [{
                     "file": "example1.py",
                     "function": "function1"
+                    "line": 10
                 }]""",
             }
         ],
@@ -355,14 +356,14 @@ def check_fuzzer_launch(event, thread, logs_folder_name):
         with open(f"{logs_folder_name}/log.txt", 'a') as file:
             file.write(f"fuzzer has failed to start, exiting @ {time.ctime()}\n\n\n")
         print(" - fuzzer has failed to start.")
-        shutil.rmtree("tmp")
+        shutil.rmtree(tmp_path)
         thread.join()
         print("exiting...")
         exit(1)
     else:
         print(" - fuzzing...")
 
-    with open(f"tmp/process.pid", 'r') as file:
+    with open(f"{tmp_path}/process.pid", 'r') as file:
         fuzzer_pid = int(file.readline().strip())
     
     return fuzzer_pid
@@ -385,7 +386,8 @@ def parse_llm_buggy_function_response(file_to_check_json):
     for item in json_data:
         result.append({
             'file': item['file'],
-            'function': item['function']
+            'function': item['function'],
+            'line': item['line']
         })
 
     print(f"\nresult[]:\n{result}\n")
@@ -413,6 +415,53 @@ def setup_logs_folder(path):
 
 
 
+def set_tmp_folder_name(path, absolute_path):
+    if path.endswith('/'):
+        path = path[:-1]
+    path = os.path.basename(path)
+
+    return f"tmp_{path}", f"{absolute_path}_{path}"
+# --------------------------------------------------------- #
+
+
+
+def extract_info_asan_report_info(line):
+    pattern = r"#0 0x[a-f0-9]+ in (?P<function>.+) (?P<file>.+):(?P<line>\d+):\d+"
+    match = re.search(pattern, line)
+    if match:
+        return {
+            'file': match.group('file'),
+            'function': match.group('function'),
+            'line': int(match.group('line'))
+        }
+    else:
+        return None
+# --------------------------------------------------------- #
+
+
+
+def asan_report_parser(report):
+    result = []
+    line_of_equal_signs = False
+    read_buggy_functions = False
+    # we go through the report line by line until we find one that is only made of '='
+    for i, line in enumerate(report.split('\n')):
+        if line.strip() == '=' * len(line.strip()):
+            # here we have excluded the part regarding the bug-triggering input
+            line_of_equal_signs = True
+        # we continue until we find the first line that starts with '#'
+        elif line_of_equal_signs and line.startswith('#'):
+            read_buggy_functions = True
+            info = extract_info_asan_report_info(line)
+            if info:
+                result.append(info)
+        elif line_of_equal_signs and read_buggy_functions:
+            if line.strip(): # if the line is not empty
+                #return the vector and remaining of the report
+                remaining_report = '\n'.join(report.split('\n')[i:])
+                return result, remaining_report
+# --------------------------------------------------------- #               
+               
 
 
 if __name__ == "__main__":
@@ -422,8 +471,9 @@ if __name__ == "__main__":
     path, build_instr, run_instr, fuzz_instr = parse_arguments()
 
     # set up the tmp folder
-    if not os.path.exists("tmp"):
-        os.mkdir("tmp")
+    tmp_path, tmp_folder_absolute_path = set_tmp_folder_name(path, TMP_FOLDER_ABS)
+    if not os.path.exists(tmp_path):
+        os.mkdir(tmp_path)
 
     # set up the logs folder
     logs_folder_name = setup_logs_folder(path)
@@ -438,6 +488,15 @@ if __name__ == "__main__":
     # we must change the provided input folder to "-" e.g. "-i input" --> "-i -"
     first_run = True
     changed_fuzz_instr = False
+
+    # we check if the program will be compiled with ASAN
+    compiled_with_asan = False
+    with open(f"{path}/{build_instr}", 'r') as file:
+        lines = file.readlines()
+        for line in lines:
+            if "asan" in line or "ASAN" in line:
+                compiled_with_asan = True
+                break
 #|_|_| end of setup phase |_|_|#
 
 
@@ -464,7 +523,7 @@ if __name__ == "__main__":
 
         # we launch the fuzzer as specified in the provided instructions
         fuzzer_started_event = threading.Event()
-        fuzzing_thread = threading.Thread(target=fuzz_program, args=(path, fuzz_instr, fuzzer_started_event))
+        fuzzing_thread = threading.Thread(target=fuzz_program, args=(path, fuzz_instr, fuzzer_started_event, tmp_folder_absolute_path))
         fuzzing_thread.start()
         first_run = False
         
@@ -490,7 +549,7 @@ if __name__ == "__main__":
     #|_|_| start of inner loop |_|_|#
         inner_loop = True
         while inner_loop:
-            # we grab a new filename from the queue, if none is available we wait for at most an hour TODO: give possiblity to config this parameter
+            # we grab a new filename from the queue, if none is available we wait for at most two hours TODO: give possiblity to config this parameter
             print("waiting for new files...")
             try:
                 new_file = queue.get(block=True, timeout=7200)
@@ -501,7 +560,7 @@ if __name__ == "__main__":
                 with open(f"{logs_folder_name}/log.txt", 'a') as file:
                     file.write(f"No new files added in the last hour, exiting @ {time.ctime()}\n")
                 os.kill(fuzzer_pid, signal.SIGINT)
-                shutil.rmtree("tmp")
+                shutil.rmtree(tmp_path)
                 fuzzing_thread.join()
                 stop_monitoring_event.set()
                 monitoring_thread.join()
@@ -516,8 +575,14 @@ if __name__ == "__main__":
 
             if is_crashing:
                 # we try to fix the program leveraging an LLM model (e.g. ChatGPT 3.5)
-                file_to_check_json = ask_llm_to_find(report, client)
-                buggy_functions = parse_llm_buggy_function_response(file_to_check_json)
+                # first of all if we have a generic report we use the LLM to find file, fucntion and line of possible buggy functions
+                if not compiled_with_asan:
+                    file_to_check_json = ask_llm_to_find(report, client, logs_folder_name) 
+                    buggy_functions = parse_llm_buggy_function_response(file_to_check_json)
+                # otherwise we parse the ASAN report
+                else:
+                    buggy_functions, report = asan_report_parser(report)
+                
 
 
             it = 0
@@ -530,7 +595,7 @@ if __name__ == "__main__":
                         continue
                     starting_line, ending_line, function_code = get_function_code(file_path, item['function'])
                     if starting_line is not None:
-                        fixed_function_code = ask_llm_to_fix(report, function_code)
+                        fixed_function_code = ask_llm_to_fix(report, function_code, logs_folder_name)
                         time.sleep(60) #TODO this timeout is not to hit the rate limiter of OpenAI, remove it for production
                         if fixed_function_code is not None and fixed_function_code != "None" and fixed_function_code != "":
                             replace_function_in_c_file(file_path, item['function'], fixed_function_code, starting_line, ending_line)
