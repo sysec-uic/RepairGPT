@@ -219,17 +219,18 @@ if __name__ == '__main__':
 
     build_commands, run_commands, max_number_of_tries, report = parse_arguments()
     print(build_commands, run_commands, max_number_of_tries, report)
+    #-----------------------------------------------#
 
-
-    # Start a shell
+    # Start a shell, build and run the program
     shell = Popen(['/bin/bash'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
     build_program(build_commands, shell)
 
     crash, stderr_content = run_program(run_commands, shell)
+    #-----------------------------------------------#
     
     # set up the OpenAI thing - set max retries to 0 for debugging - raise for production TODO
-    client = OpenAI( max_retries=0)
+    client = OpenAI( max_retries=0 )
 
     try_count = 0
 
