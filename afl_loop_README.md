@@ -10,6 +10,8 @@
 - Preliminaries:
     - See requirements on the [afl-training repository](https://github.com/mykter/afl-training/tree/main) 
         - my suggestion is to run it inside the provided docker container
+    - Python v3.8.10
+    - Dependencies: argparse, anthropic, dotenv
     - Implement an harness for your target application to allow proper interaction with AFL
     - afl_loop.py needs three files:
         - one containing the instructions to build the target program
@@ -18,10 +20,13 @@
             - if the program reads from file then swap the filename argument with "INPUT"
             - if the program needs the file content as an argument then swap that with "INPUT_STDIN"
     - create a `.env` with OpenAI key specified
-        - e.g. `OPENAI_API_KEY=sk-proj-.......`
-        - LLM currently in use: ChatGPT3.5
+        - e.g. `ANTHROPIC_API_KEY=sk-proj-.......`
+        - LLM currently in use: Claude3
     - a configuration file can optionally be specified with the following parameters
-        - 
+        - maximum queue timeout
+            - that is the longest amount of time we continue fuzzing after we have found the last bug
+        - maximum number of tries we do to fix a broken function
+        - the timeout between llm request to avoid hitting the rate limiter
     
 
 
