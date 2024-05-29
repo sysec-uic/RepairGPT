@@ -1,8 +1,8 @@
-import os, shutil, signal, time, argparse, threading, json, re
+import os, shutil, signal, time, argparse, threading, json, re, anthropic
 from queue import Queue, Empty
 from subprocess import Popen, PIPE
 from dotenv import load_dotenv
-from openai import OpenAI
+#from openai import OpenAI
 
 # --------------------------------------------------------- #
 #
@@ -201,7 +201,7 @@ def monitor_folder(path, queue, stop_event):
            
 def ask_llm_to_find(client, report, logs_folder_name):
     """
-    Creates and sends the request to OpenAI and returns the response from OpenAI.
+    Creates and sends the request to Claude3 and returns the response from it.
     This function in used to ask the LLM to parse generic bug reports.
 
     The reponse should contain a json file containing a list of items
@@ -211,8 +211,28 @@ def ask_llm_to_find(client, report, logs_folder_name):
     """
 
     print("we ask the LLM to find the file and functions responsible for the bug")
-    completion =  client.chat.completions.create(
+    # completion =  client.chat.completions.create(
 
+    #     messages=[
+    #         {
+    #             "role": "user",
+    #             "content": report + """Given this information in which files and functions should i look into to locate the bug? Return the results in a json format structured like the following example, without any additional comments.
+    #             [{
+    #                 "file": "example1.py",
+    #                 "function": "function1"
+    #                 "line": 10
+    #             }]""",
+    #         }
+    #     ],
+
+    #     model="gpt-3.5-turbo",
+    # )
+
+    message = client.messages.create (
+        model="claude-3-opus-20240229",
+        max_tokens=1000,
+        temperature=0.0,
+        system="Respond only in Yoda-speak.",
         messages=[
             {
                 "role": "user",
@@ -223,22 +243,30 @@ def ask_llm_to_find(client, report, logs_folder_name):
                     "line": 10
                 }]""",
             }
-        ],
-
-        model="gpt-3.5-turbo",
+        ]
     )
 
+    if message.content[0].type == "error":
+        with open(f"{logs_folder_name}/log_llm.txt", 'a') as file:
+            file.write(f"Response from Claude: ERROR\n\n\n\n")
+        return None
+    text = message.content[0].text
 
     with open(f"{logs_folder_name}/log_llm.txt", 'a') as file:
         file.write("ask_llm_to_find\n")
         file.write(f"report:\n{report}\n\n")
-        file.write(f"Response from OpenAI\n{completion.choices[0].message.content}\n\n\n\n")
+        #file.write(f"Response from OpenAI\n{completion.choices[0].message.content}\n\n\n\n")
+        file.write(f"Response from Claude\n{text}\n\n\n\n")
+    
 
     #if completion.choices[0].message.content starts with ``` then we want to discard the first and last line
-    if completion.choices[0].message.content.startswith("```"):
-        return '\n'.join(completion.choices[0].message.content.split('\n')[1:-1]) #we return a string
+    # if completion.choices[0].message.content.startswith("```"):
+    #     return '\n'.join(completion.choices[0].message.content.split('\n')[1:-1]) #we return a string
+    if text.startswith("```"):
+        return '\n'.join(text.split('\n')[1:-1])
     
-    return completion.choices[0].message.content
+    #return completion.choices[0].message.content
+    return text
 # --------------------------------------------------------- #
 
 
@@ -246,36 +274,59 @@ def ask_llm_to_find(client, report, logs_folder_name):
 
 def ask_llm_to_fix(client, report, function_code, logs_folder_name):
     """
-    This function creates and sends the request to OpenAI and returns its response.
+    This function creates and sends the request to Claude3 and returns its response.
     This function asks the LLM to return the fixed code of given a buggy function.
     """
 
     print("asking llm for a fix")
-    completion =  client.chat.completions.create(
+    # completion =  client.chat.completions.create(
 
+    #     messages=[
+    #         {
+    #             "role": "user",
+    #             "content": f"{report}\n{function_code}\n Given this information, provide a fix. Return the fixed code for the whole function without any additional comments.",
+    #         }
+    #     ],
+
+    #     model="gpt-3.5-turbo",
+    # )
+    message = client.messages.create (
+        model="claude-3-opus-20240229",
+        max_tokens=1000,
+        temperature=0.0,
+        system="Respond only in Yoda-speak.",
         messages=[
             {
                 "role": "user",
-                "content": f"{report}\n{function_code}\n Given this information, provide a fix. Return the fixed code for the whole function without any additional comments.",
+                "content": f"{report}\n{function_code}\n Given this information, provide a fix. Return just the fixed code for the whole function without any additional comments, only the code itself.",
             }
-        ],
-
-        model="gpt-3.5-turbo",
+        ]
     )
-    print("Response from OpenAI")
+    print("Response from Claude3")
     # print(completion.choices[0].message.content)
     # print("\n\n")
+
+    if message.content[0].type == "error":
+        with open(f"{logs_folder_name}/log_llm.txt", 'a') as file:
+            file.write(f"Response from Claude: ERROR\n\n\n\n")
+        return None
+    text = message.content[0].text
+
 
     with open(f"{logs_folder_name}/log_llm.txt", 'a') as file:
         file.write("ask_llm_to_fix\n")
         file.write(f"function code:\n{function_code}\n\n")
-        file.write(f"Response from OpenAI\n{completion.choices[0].message.content}\n\n\n\n")
+        #file.write(f"Response from OpenAI\n{completion.choices[0].message.content}\n\n\n\n")
+        file.write(f"Response from Claude\n{text}\n\n\n\n")
 
     #if completion.choices[0].message.content starts with ``` then we want to discard the first and last line
-    if completion.choices[0].message.content.startswith("```"):
-        return '\n'.join(completion.choices[0].message.content.split('\n')[1:-1])
+    # if completion.choices[0].message.content.startswith("```"):
+    #     return '\n'.join(completion.choices[0].message.content.split('\n')[1:-1])
+    if text.startswith("```"):
+        return '\n'.join(text.split('\n')[1:-1])
 
-    return completion.choices[0].message.content
+    # return completion.choices[0].message.content
+    return text
 # --------------------------------------------------------- #
 
 
@@ -283,14 +334,20 @@ def ask_llm_to_fix(client, report, function_code, logs_folder_name):
 
 def find_file(filename, search_path):
     """
-    given a filename and a starting point search path, this function will search for the file and return the relative path to it
     """
 
+    # Check if search_path is in filename and exclude everything in filename that comes before it
+    if search_path in filename:
+        relative_path = filename.split(search_path, 1)[1].lstrip('/')
+    else:
+        return None
+
     for root, dir, files in os.walk(search_path):
-        if filename in files:
-            print(f"{search_path}/{os.path.relpath(os.path.join(root, filename), search_path)}")
-            return f"{search_path}/{os.path.relpath(os.path.join(root, filename), search_path)}"
+        if os.path.basename(filename) in files:
+            print(f"{search_path}/{os.path.relpath(os.path.join(root, os.path.basename(filename)), search_path)}")
+            return f"{search_path}/{os.path.relpath(os.path.join(root, os.path.basename(filename)), search_path)}"
         
+    print(f"Could not find the file {search_path}/{relative_path}")   
     return None
 # --------------------------------------------------------- #
 
@@ -366,8 +423,10 @@ def get_function_code(file_path, function_name):
                     bracket_counter -= line.count('}')
                     if bracket_counter == 0:
                         function_ending_line = index
+                        print(f"Found function {function_name} in file {file_path}")
                         return function_starting_line, function_ending_line, function_code
                     
+    print(f"Could not find the function {function_name} in the file {file_path}") 
     return None, None, None
 # --------------------------------------------------------- #
 
@@ -539,32 +598,53 @@ def asan_report_parser(report):
     It looks for the a line made only by "=" which separates the report.
     Then it looks for all subsequent lines that start with '#' and extracts the file, function and line of the buggy functions.
     """
+    # print("parsing the ASAN report")
+    # print(report)
+    # result = []
+    # line_of_equal_signs = False
+    # read_buggy_functions = False
 
-    result = []
-    line_of_equal_signs = False
-    read_buggy_functions = False
+    # # we go through the report line by line until we find one that is only made of '='
+    # for i, line in enumerate(report.split('\n')):
 
-    # we go through the report line by line until we find one that is only made of '='
-    for i, line in enumerate(report.split('\n')):
-
-        if len(line.strip()) > 1 and line.strip() == '=' * len(line.strip()) and not line_of_equal_signs:
-            # here we have excluded the part regarding the bug-triggering input
-            line_of_equal_signs = True
-        # we continue until we find the first line that starts with '#'
-        elif line_of_equal_signs and line.startswith('#'):
-            read_buggy_functions = True
-            info = extract_info_asan_report_info(line)
-            if info:
-                result.append(info)
-        elif line_of_equal_signs and read_buggy_functions:
-            if line.strip(): # if the line is not empty
-                #return the vector and remaining of the report
-                remaining_report = '\n'.join(report.split('\n')[i:])
-                print(result)
-                return result, remaining_report
+    #     if len(line.strip()) > 1 and line.strip() == '=' * len(line.strip()) and not line_of_equal_signs:
+    #         # here we have excluded the part regarding the bug-triggering input
+    #         line_of_equal_signs = True
+    #         print("line of equal signs found")
+    #     # we continue until we find the first line that starts with '#'
+    #     elif line_of_equal_signs and line.startswith('    #'):
+    #         read_buggy_functions = True
+    #         info = extract_info_asan_report_info(line)
+    #         print(info)
+    #         if info:
+    #             result.append(info)
+    #     elif line_of_equal_signs and read_buggy_functions and not line.startswith('    #'):
+    #         #return the vector and remaining of the report
+    #         remaining_report = '\n'.join(report.split('\n')[i:])
+    #         print(result)
+    #         return result, remaining_report
             
-    # if we reach this point we have not found any buggy functions
-    return result, report
+    # # if we reach this point we have not found any buggy functions
+    # return result, report
+    pattern = r"#\d+ 0x[\da-f]+ in (\w+) (.*):(\d+):\d+"
+    info = []
+    started = False
+
+    for line in report.split('\n'):
+        match = re.search(pattern, line)
+        if match:
+            started = True
+            function_name, file_name, line_number = match.groups()
+            info.append({
+                "file": file_name,
+                "function": function_name,
+                "line": line_number
+            })
+        elif started:
+            break
+
+    #print(info)
+    return info, report
 # --------------------------------------------------------- #               
                
 
@@ -615,8 +695,9 @@ if __name__ == "__main__":
     # load and parse the configuration file
     queue_timeout, llm_max_retries, num_tries_to_fix, llm_timeout = load_config_file(CONFIG_FILE_PATH)
 
-    # set up the OpenAI thing - set max retries to 0 for debugging
-    client = OpenAI( max_retries=llm_max_retries )
+    # set up the Claude3 thing - set max retries to 0 for debugging
+    #client = OpenAI( max_retries=llm_max_retries )
+    client = anthropic.Anthropic()
 
     # is it the first run - if so we use the provided instructions to fuzz the program otherwise
     # we must change the provided input folder to "-" e.g. "-i input" --> "-i -"
@@ -720,27 +801,37 @@ if __name__ == "__main__":
 
             # if we have found buggy functions we try to fix them, we give the LLM x amount of tries
             it = 0
+            done_something = False
             while is_crashing and it < num_tries_to_fix:
                 print(it)
+                print(f"bugs in: {buggy_functions}")
                 # for each item we think might be buggy we fetch the code of the function and ask the LLM to fix it
                 for item in buggy_functions:
                     file_path = find_file(item["file"], path)
+                    print(f"file_path: {file_path}")
                     if file_path is None:
                         with open(f"{logs_folder_name}/log.txt", 'a') as file:
                             file.write(f"Could not find the file {item['file']} @ {time.ctime()}\n")
                         continue
                     starting_line, ending_line, function_code = get_function_code(file_path, item["function"])
+                    print(f"starting_line: {starting_line}, ending_line: {ending_line}")
                     if starting_line is not None:
+                        print(f"function_code: {function_code}")
                         fixed_function_code = ask_llm_to_fix(client, report, function_code, logs_folder_name)
+                        print(f"fixed_function_code: {fixed_function_code}")
                         time.sleep(llm_timeout) #this timeout is not to hit the rate limiter of OpenAI
 
                         # we replace the buggy function with the fixed one, rebuild the program and rerun it and loop again
                         if fixed_function_code is not None and fixed_function_code != "None" and fixed_function_code != "":
                             replace_function_in_c_file(file_path, item["function"], fixed_function_code, starting_line, ending_line)
-                
-                build_program(path, build_instr)
-                is_crashing, report = run_program(path, run_instr, f"./{fuzzer_output_folder}/default/crashes/{new_file}")
-                print(f"try #{it} - is_crashing: {is_crashing}")
+                            done_something = True
+
+                if done_something:
+                    build_program(path, build_instr)
+                    is_crashing, report = run_program(path, run_instr, f"./{fuzzer_output_folder}/default/crashes/{new_file}")
+                    print(f"try #{it} - is_crashing: {is_crashing}")
+                else:
+                    print("did not do anything")
                 it += 1
 
 
